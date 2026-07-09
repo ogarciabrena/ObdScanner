@@ -117,30 +117,28 @@ private fun MainScreen(
             }
         }
     ) { padding ->
-        when (selectedTab) {
-            0 -> DashboardScreen(
-                viewModel = dashboardViewModel,
-                onDisconnect = {
-                    coroutineScope.launch { bluetoothManager.disconnect() }
-                }
-            )
-            1 -> ConnectionScreen(bluetoothManager = bluetoothManager)
-            2 -> DtcScreen(
-                obdUseCase = obdUseCase,
-                isConnected = isConnected
-            )
-            3 -> LoggingScreen(
-                isConnected = isConnected,
-                recentData = dashboardViewModel.state.value.sensors.values.toList()
-            )
-            else -> SettingsScreen()
-        }.let { content ->
-            androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                content
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            when (selectedTab) {
+                0 -> DashboardScreen(
+                    viewModel = dashboardViewModel,
+                    onDisconnect = {
+                        coroutineScope.launch { bluetoothManager.disconnect() }
+                    }
+                )
+                1 -> ConnectionScreen(bluetoothManager = bluetoothManager)
+                2 -> DtcScreen(
+                    obdUseCase = obdUseCase,
+                    isConnected = isConnected
+                )
+                3 -> LoggingScreen(
+                    isConnected = isConnected,
+                    recentData = dashboardViewModel.state.value.sensors.values.toList()
+                )
+                else -> SettingsScreen()
             }
         }
     }
