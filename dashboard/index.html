@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ObdScanner — Comportamiento de conducción</title>
+<style>
+:root{
+  --surface-1:#fcfcfb; --page:#f9f9f7;
+  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --speed:#2a78d6; --rpm:#1baf7a; --temp:#eda100;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --surface-1:#1a1a19; --page:#0d0d0d;
+    --ink-1:#ffffff; --ink-2:#c3c2b7; --ink-3:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --speed:#3987e5; --rpm:#199e70; --temp:#c98500;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--page);color:var(--ink-1);padding:20px;max-width:1100px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:20px}
+header h1{font-size:20px;font-weight:600;margin-right:auto}
+select,button{font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-1);color:var(--ink-1);cursor:pointer}
+#status{font-size:13px;color:var(--ink-3);width:100%}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.tile{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px}
+.tile .label{font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.tile .value{font-size:26px;font-weight:600}
+.tile .value small{font-size:13px;font-weight:400;color:var(--ink-2);margin-left:2px}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+.card h2{font-size:14px;font-weight:600;margin-bottom:2px}
+.card .sub{font-size:12px;color:var(--ink-3);margin-bottom:10px}
+.chartwrap{position:relative;overflow-x:auto}
+svg{display:block;width:100%;height:auto}
+.tooltip{position:absolute;pointer-events:none;background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);display:none;white-space:nowrap;z-index:5}
+.tooltip .tv{font-weight:600}
+.events{list-style:none}
+.events li{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--grid);font-size:13px}
+.events li:last-child{border-bottom:none}
+.badge{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:12px}
+.badge::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor}
+.b-brake{color:var(--critical)} .b-accel{color:var(--serious)} .b-rev{color:var(--warning)} .b-speed{color:var(--critical)}
+.muted{color:var(--ink-3);font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--grid);font-variant-numeric:tabular-nums}
+th{color:var(--ink-2);font-weight:600;font-size:12px}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--page)}
+tbody tr.sel{background:var(--page);font-weight:600}
+details summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-bottom:8px}
+.empty{padding:40px;text-align:center;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<header>
+  <h1>ObdScanner · Comportamiento</h1>
+  <select id="tripSel"></select>
+  <button id="refresh">Actualizar</button>
+  <button id="cfgBtn">⚙ Configurar</button>
+  <div id="status">Cargando…</div>
+</header>
+
+<div class="card" id="cfgCard" style="display:none">
+  <h2>Conexión a Supabase</h2>
+  <div class="sub">Pega la URL de tu proyecto y la publishable key (Settings → API Keys). Se guardan solo en este navegador.</div>
+  <div style="display:grid;gap:8px;max-width:560px">
+    <input id="cfgUrl" placeholder="https://xxxx.supabase.co" style="font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--ink-1)">
+    <input id="cfgKey" placeholder="sb_publishable_…" style="font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--ink-1)">
+    <div><button id="cfgSave">Guardar y conectar</button></div>
+  </div>
+</div>
+
+<div class="tiles" id="tiles"></div>
+
+<div class="card" id="speedCard">
+  <h2>Velocidad</h2><div class="sub">km/h — los marcadores señalan eventos bruscos</div>
+  <div class="chartwrap" id="chartSpeed"></div>
+</div>
+<div class="card">
+  <h2>RPM del motor</h2><div class="sub">revoluciones por minuto</div>
+  <div class="chartwrap" id="chartRpm"></div>
+</div>
+<div class="card">
+  <h2>Temperatura del refrigerante</h2><div class="sub">°C</div>
+  <div class="chartwrap" id="chartTemp"></div>
+</div>
+
+<div class="card">
+  <h2>Eventos de conducción</h2>
+  <div class="sub">frenadas ≤ −10 km/h/s · aceleraciones ≥ 8 km/h/s · RPM &gt; 3500 · velocidad &gt; 120 km/h</div>
+  <ul class="events" id="events"></ul>
+</div>
+
+<div class="card">
+  <h2>Viajes</h2><div class="sub">clic en una fila para cargarla</div>
+  <table><thead><tr><th>Inicio</th><th>Duración</th><th>Muestras</th><th>Dispositivo</th></tr></thead>
+  <tbody id="tripRows"></tbody></table>
+</div>
+
+<div class="card">
+  <details><summary>Ver datos en tabla</summary>
+  <table><thead><tr><th>Hora</th><th>Sensor</th><th>Valor</th></tr></thead><tbody id="dataRows"></tbody></table>
+  </details>
+</div>
+
+<script>
+// Credenciales del usuario — guardadas en localStorage de este navegador.
+let SB_URL = localStorage.getItem("sb_url") || "";
+let SB_KEY = localStorage.getItem("sb_key") || "";
+const PID = { SPEED:13, RPM:12, COOLANT:5 };
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function showConfig(show){
+  document.getElementById("cfgCard").style.display = show ? "block" : "none";
+  document.getElementById("cfgUrl").value = SB_URL;
+  document.getElementById("cfgKey").value = SB_KEY;
+}
+document.getElementById("cfgBtn").onclick = () => showConfig(document.getElementById("cfgCard").style.display==="none");
+document.getElementById("cfgSave").onclick = () => {
+  SB_URL = document.getElementById("cfgUrl").value.trim().replace(/\/+$/,"");
+  SB_KEY = document.getElementById("cfgKey").value.trim();
+  localStorage.setItem("sb_url", SB_URL);
+  localStorage.setItem("sb_key", SB_KEY);
+  showConfig(false);
+  loadTrips().catch(e=>setStatus("Error: "+e.message));
+};
+
+async function sbGet(path){
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, {headers:{apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}`}});
+  if(!r.ok) throw new Error(`Supabase ${r.status}`);
+  return r.json();
+}
+
+let trips = [], currentTrip = null;
+
+async function loadTrips(){
+  if(!SB_URL || !SB_KEY){
+    setStatus("Configura tu proyecto de Supabase para empezar (botón ⚙ Configurar).");
+    showConfig(true);
+    return;
+  }
+  setStatus("Cargando viajes…");
+  trips = await sbGet("trips?select=*&order=start_ts.desc&limit=100");
+  const sel = document.getElementById("tripSel");
+  sel.innerHTML = trips.map(t=>`<option value="${t.id}">${fmtDate(t.start_ts)} · ${dur(t.start_ts,t.end_ts)}</option>`).join("");
+  renderTripTable();
+  if(trips.length){ loadTrip(trips[0].id); }
+  else setStatus("Sin viajes aún — conecta el OBD y graba tu primer viaje.");
+}
+
+async function loadTrip(id){
+  currentTrip = trips.find(t=>t.id===id);
+  document.getElementById("tripSel").value = id;
+  renderTripTable();
+  setStatus("Cargando telemetría…");
+  let rows = [], offset = 0;
+  while(offset < 100000){
+    const page = await sbGet(`telemetry?trip_id=eq.${id}&select=ts,pid,name,value,unit&order=ts.asc&limit=1000&offset=${offset}`);
+    rows = rows.concat(page);
+    if(page.length < 1000) break;
+    offset += 1000;
+  }
+  setStatus(`${rows.length.toLocaleString()} lecturas · viaje del ${fmtDate(currentTrip.start_ts)}`);
+  render(rows);
+}
+
+function seriesOf(rows,pid){ return rows.filter(r=>r.pid===pid).map(r=>({t:r.ts,v:r.value})); }
+
+function detectEvents(speed,rpm){
+  const ev = [];
+  for(let i=1;i<speed.length;i++){
+    const dt=(speed[i].t-speed[i-1].t)/1000;
+    if(dt<=0||dt>5) continue;
+    const a=(speed[i].v-speed[i-1].v)/dt;
+    if(a<=-10) ev.push({t:speed[i].t,type:"brake",label:"Frenada brusca",cls:"b-brake",detail:`${a.toFixed(1)} km/h/s (de ${speed[i-1].v.toFixed(0)} a ${speed[i].v.toFixed(0)} km/h)`});
+    else if(a>=8) ev.push({t:speed[i].t,type:"accel",label:"Aceleración brusca",cls:"b-accel",detail:`+${a.toFixed(1)} km/h/s`});
+    if(speed[i].v>120) ev.push({t:speed[i].t,type:"speed",label:"Exceso de velocidad",cls:"b-speed",detail:`${speed[i].v.toFixed(0)} km/h`});
+  }
+  let over=null;
+  for(const p of rpm){
+    if(p.v>3500){ if(!over) over={start:p.t,max:p.v}; else over.max=Math.max(over.max,p.v); }
+    else if(over){ if(p.t-over.start>=3000) ev.push({t:over.start,type:"rev",label:"RPM sostenidas altas",cls:"b-rev",detail:`máx ${over.max.toFixed(0)} rpm`}); over=null; }
+  }
+  return ev.sort((a,b)=>a.t-b.t).slice(0,200);
+}
+
+function score(ev){
+  const n=t=>ev.filter(e=>e.type===t).length;
+  return Math.max(0, 100 - 5*n("brake") - 4*n("accel") - 3*n("rev") - 2*n("speed"));
+}
+
+function render(rows){
+  const speed=seriesOf(rows,PID.SPEED), rpm=seriesOf(rows,PID.RPM), temp=seriesOf(rows,PID.COOLANT);
+  const ev = detectEvents(speed,rpm);
+  const s = score(ev);
+  const t0=currentTrip.start_ts;
+  const dist = integrate(speed);
+
+  const tiles=[
+    ["Duración", dur(currentTrip.start_ts,currentTrip.end_ts), ""],
+    ["Distancia estimada", dist.toFixed(1), "km"],
+    ["Velocidad media", avg(speed).toFixed(0), "km/h"],
+    ["Velocidad máxima", max(speed).toFixed(0), "km/h"],
+    ["RPM máximas", max(rpm).toFixed(0), ""],
+    ["Temp. máx refrigerante", temp.length?max(temp).toFixed(0):"–", temp.length?"°C":""],
+    ["Eventos bruscos", ev.length, ""],
+    ["Score de conducción", `${scoreIcon(s)} ${s}`, "/100"],
+  ];
+  document.getElementById("tiles").innerHTML = tiles.map(([l,v,u])=>
+    `<div class="tile"><div class="label">${l}</div><div class="value">${v}<small>${u}</small></div></div>`).join("");
+
+  drawChart("chartSpeed", speed, css("--speed"), "km/h", t0, ev);
+  drawChart("chartRpm",   rpm,   css("--rpm"),   "rpm",  t0, []);
+  drawChart("chartTemp",  temp,  css("--temp"),  "°C",   t0, []);
+
+  document.getElementById("events").innerHTML = ev.length
+    ? ev.map(e=>`<li><span class="badge ${e.cls}">${e.label}</span><span class="muted">${fmtClock(e.t)}</span><span>${e.detail}</span></li>`).join("")
+    : `<li class="muted">Sin eventos bruscos en este viaje — buen manejo 👌</li>`;
+
+  document.getElementById("dataRows").innerHTML =
+    downsample(rows.map(r=>({t:r.ts,v:r.value,name:r.name,unit:r.unit})),300)
+    .map(r=>`<tr><td>${fmtClock(r.t)}</td><td>${r.name}</td><td>${r.v.toFixed(1)} ${r.unit}</td></tr>`).join("");
+}
+
+function scoreIcon(s){ return s>=85?"🟢":s>=60?"🟡":"🔴"; }
+function avg(s){ return s.length? s.reduce((a,p)=>a+p.v,0)/s.length : 0; }
+function max(s){ return s.length? Math.max(...s.map(p=>p.v)) : 0; }
+function integrate(s){ let d=0; for(let i=1;i<s.length;i++){const dt=(s[i].t-s[i-1].t)/3600000; if(dt>0&&dt<0.01) d+=(s[i].v+s[i-1].v)/2*dt;} return d; }
+function downsample(pts,n){ if(pts.length<=n) return pts; const out=[],step=pts.length/n; for(let i=0;i<n;i++) out.push(pts[Math.floor(i*step)]); return out; }
+function dur(a,b){ const m=Math.max(0,Math.round((b-a)/60000)); return m>=60? `${Math.floor(m/60)} h ${m%60} min` : `${m} min`; }
+function fmtDate(ts){ return new Date(ts).toLocaleString("es-MX",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); }
+function fmtClock(ts){ return new Date(ts).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+function niceTicks(maxV){ if(maxV<=0) return [0,1]; const raw=maxV/4, mag=10**Math.floor(Math.log10(raw)), n=Math.ceil(raw/mag)*mag; const t=[]; for(let v=0;v<=maxV+n*0.01;v+=n) t.push(v); return t; }
+
+function drawChart(elId, pts, color, unit, t0, events){
+  const el=document.getElementById(elId);
+  if(!pts.length){ el.innerHTML=`<div class="empty">Sin datos de este sensor</div>`; return; }
+  pts = downsample(pts, 600);
+  const W=1000,H=260,mL=52,mR=70,mT=14,mB=28;
+  const iw=W-mL-mR, ih=H-mT-mB;
+  const tMin=pts[0].t, tMax=pts[pts.length-1].t||tMin+1;
+  const vMax=Math.max(...pts.map(p=>p.v))*1.08||1;
+  const X=t=>mL+iw*(t-tMin)/Math.max(1,tMax-tMin);
+  const Y=v=>mT+ih*(1-v/vMax);
+  const ticks=niceTicks(vMax);
+
+  let g=ticks.map(v=>`<line x1="${mL}" y1="${Y(v)}" x2="${W-mR}" y2="${Y(v)}" stroke="var(--grid)" stroke-width="1"/>
+    <text x="${mL-8}" y="${Y(v)+4}" text-anchor="end" font-size="11" fill="var(--ink-3)" font-variant-numeric="tabular-nums">${v.toLocaleString()}</text>`).join("");
+
+  const nX=5;
+  for(let i=0;i<=nX;i++){ const t=tMin+(tMax-tMin)*i/nX;
+    g+=`<text x="${X(t)}" y="${H-8}" text-anchor="middle" font-size="11" fill="var(--ink-3)">${fmtClock(t)}</text>`; }
+
+  const line=pts.map((p,i)=>`${i?"L":"M"}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join("");
+  const area=`${line} L${X(tMax).toFixed(1)},${Y(0)} L${X(tMin).toFixed(1)},${Y(0)} Z`;
+
+  let evMarks="";
+  for(const e of events){
+    if(e.t<tMin||e.t>tMax) continue;
+    const col=e.type==="rev"?"var(--warning)":e.type==="accel"?"var(--serious)":"var(--critical)";
+    evMarks+=`<line x1="${X(e.t)}" y1="${mT}" x2="${X(e.t)}" y2="${mT+ih}" stroke="${col}" stroke-width="1" opacity=".5"/>
+      <circle cx="${X(e.t)}" cy="${mT+6}" r="4" fill="${col}" stroke="var(--surface-1)" stroke-width="2"/>`;
+  }
+
+  const pMax=pts.reduce((a,p)=>p.v>a.v?p:a,pts[0]);
+  const last=pts[pts.length-1];
+  const labels=`<circle cx="${X(pMax.t)}" cy="${Y(pMax.v)}" r="4" fill="${color}" stroke="var(--surface-1)" stroke-width="2"/>
+    <text x="${X(pMax.t)}" y="${Y(pMax.v)-8}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink-1)">${pMax.v.toFixed(0)}</text>
+    <circle cx="${X(last.t)}" cy="${Y(last.v)}" r="4" fill="${color}" stroke="var(--surface-1)" stroke-width="2"/>
+    <text x="${X(last.t)+8}" y="${Y(last.v)+4}" font-size="11" font-weight="600" fill="var(--ink-1)">${last.v.toFixed(0)} ${unit}</text>`;
+
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="min-width:600px">
+    ${g}
+    <line x1="${mL}" y1="${mT+ih}" x2="${W-mR}" y2="${mT+ih}" stroke="var(--axis)" stroke-width="1"/>
+    <path d="${area}" fill="${color}" opacity="0.1"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${evMarks}${labels}
+    <line class="xh" x1="0" y1="${mT}" x2="0" y2="${mT+ih}" stroke="var(--ink-3)" stroke-width="1" style="display:none"/>
+    <circle class="xd" r="4" fill="${color}" stroke="var(--surface-1)" stroke-width="2" style="display:none"/>
+  </svg><div class="tooltip"></div>`;
+
+  const svg=el.querySelector("svg"), tip=el.querySelector(".tooltip"),
+        xh=svg.querySelector(".xh"), xd=svg.querySelector(".xd");
+  svg.addEventListener("mousemove",m=>{
+    const r=svg.getBoundingClientRect();
+    const t=tMin+(tMax-tMin)*((m.clientX-r.left)/r.width*W-mL)/iw;
+    let best=pts[0]; for(const p of pts) if(Math.abs(p.t-t)<Math.abs(best.t-t)) best=p;
+    xh.style.display=xd.style.display="block";
+    xh.setAttribute("x1",X(best.t)); xh.setAttribute("x2",X(best.t));
+    xd.setAttribute("cx",X(best.t)); xd.setAttribute("cy",Y(best.v));
+    tip.style.display="block";
+    tip.innerHTML=`${fmtClock(best.t)}<br><span class="tv">${best.v.toFixed(1)} ${unit}</span>`;
+    const px=X(best.t)/W*r.width;
+    tip.style.left=Math.min(px+12, r.width-130)+"px";
+    tip.style.top=(Y(best.v)/H*r.height-10)+"px";
+  });
+  svg.addEventListener("mouseleave",()=>{tip.style.display=xh.style.display=xd.style.display="none";});
+}
+
+function renderTripTable(){
+  document.getElementById("tripRows").innerHTML = trips.map(t=>
+    `<tr class="${currentTrip&&t.id===currentTrip.id?"sel":""}" onclick="loadTrip('${t.id}')">
+     <td>${fmtDate(t.start_ts)}</td><td>${dur(t.start_ts,t.end_ts)}</td>
+     <td>${(t.sample_count||0).toLocaleString()}</td><td>${t.device||"–"}</td></tr>`).join("");
+}
+
+function setStatus(s){ document.getElementById("status").textContent=s; }
+document.getElementById("refresh").onclick=loadTrips;
+document.getElementById("tripSel").onchange=e=>loadTrip(e.target.value);
+loadTrips().catch(e=>setStatus("Error: "+e.message));
+</script>
+</body>
+</html>
