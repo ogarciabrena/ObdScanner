@@ -3,13 +3,12 @@ package com.obd.scanner.data.obd.protocol
 import com.obd.scanner.domain.model.Dtc
 import com.obd.scanner.domain.model.ObdProtocol
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
 import java.io.InputStream
-import java.io.InputStreamReader
 import java.io.OutputStream
 import kotlin.coroutines.coroutineContext
 
@@ -17,7 +16,6 @@ class Elm327(
     private val inputStream: InputStream,
     private val outputStream: OutputStream
 ) {
-    private val reader: BufferedReader = BufferedReader(InputStreamReader(inputStream))
     private var isInitialized = false
     private var detectedProtocol: ObdProtocol = ObdProtocol.AUTO
 
@@ -30,9 +28,10 @@ class Elm327(
             try {
                 reset()
                 setEcho(false)
-                setLinefeed(true)
+                setLinefeed(false)
                 setHeader(false)
-                setSpaces(false)
+                // Spaces ON: the PID/DTC parsers split responses on whitespace
+                setSpaces(true)
                 val proto = autoDetectProtocol()
                 isInitialized = true
                 detectedProtocol = proto
@@ -114,33 +113,35 @@ class Elm327(
     }
 
     suspend fun sendCommand(command: String) {
-        outputStream.write((command + "\r\n").toByteArray(Charsets.US_ASCII))
+        // Drain any stale bytes from a previous (timed-out) exchange
+        while (inputStream.available() > 0) inputStream.read()
+        outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
         outputStream.flush()
     }
 
-    private suspend fun readLine(timeoutMs: Long = 1000): String? {
+    /**
+     * Reads raw chars until the ELM327 prompt '>' or timeout. The prompt is NOT
+     * followed by a newline, so line-based reads would block forever.
+     */
+    private suspend fun readUntilPrompt(timeoutMs: Long): String {
+        val sb = StringBuilder()
         val startTime = System.currentTimeMillis()
-        while (coroutineContext.isActive) {
-            if (reader.ready()) {
-                return reader.readLine()?.trim()
+        while (coroutineContext.isActive && System.currentTimeMillis() - startTime < timeoutMs) {
+            if (inputStream.available() > 0) {
+                val c = inputStream.read()
+                if (c == -1) break
+                val ch = c.toChar()
+                if (ch == '>') break
+                sb.append(ch)
+            } else {
+                delay(20)
             }
-            if (System.currentTimeMillis() - startTime > timeoutMs) return null
-            kotlinx.coroutines.delay(10)
         }
-        return null
+        return sb.toString()
     }
 
     private suspend fun consumeUntilPrompt(timeoutMs: Long) {
-        val startTime = System.currentTimeMillis()
-        while (coroutineContext.isActive) {
-            if (System.currentTimeMillis() - startTime > timeoutMs) return
-            val line = readLine(100)
-            if (line == null) {
-                kotlinx.coroutines.delay(50)
-                continue
-            }
-            if (line == ">" || line == "OK") return
-        }
+        readUntilPrompt(timeoutMs)
     }
 
     suspend fun readDtc(): Result<List<Dtc>> = withContext(Dispatchers.IO) {
@@ -189,21 +190,11 @@ class Elm327(
     }
 
     private suspend fun readRawResponse(timeoutMs: Long): String {
-        val buffer = StringBuilder()
-        val startTime = System.currentTimeMillis()
-        while (coroutineContext.isActive) {
-            if (System.currentTimeMillis() - startTime > timeoutMs) break
-            val line = readLine(100)
-            if (line == null) {
-                kotlinx.coroutines.delay(10)
-                continue
-            }
-            if (line == ">" || line.startsWith(">")) break
-            if (line.isNotBlank() && line != "OK") {
-                buffer.append(line).append(" ")
-            }
-        }
-        return buffer.toString().trim()
+        return readUntilPrompt(timeoutMs)
+            .replace('\r', ' ')
+            .replace('\n', ' ')
+            .replace("\\s+".toRegex(), " ")
+            .trim()
     }
 
     private fun parsePidResponse(data: String, mode: Int, pid: Int): List<Int> {
@@ -257,6 +248,5 @@ class Elm327(
     fun close() {
         try { inputStream.close() } catch (_: Exception) {}
         try { outputStream.close() } catch (_: Exception) {}
-        try { reader.close() } catch (_: Exception) {}
     }
 }
