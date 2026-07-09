@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+app/build/
+.kotlin/
+
+# Credenciales locales y config del SDK (NUNCA subir)
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# APKs y firmas
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# Otros
+.DS_Store
+captures/
