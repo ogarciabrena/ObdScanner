@@ -2,6 +2,14 @@
 
 App Android de **telemetría OBD-II** con detección automática de viajes, sincronización a la nube (Supabase), análisis con IA vía **MCP** y dashboard web de comportamiento de conducción.
 
+<p>
+  <a href="https://github.com/ogarciabrena/ObdScanner/releases/latest">
+    <img alt="Descargar APK" src="https://img.shields.io/github/v/release/ogarciabrena/ObdScanner?label=%F0%9F%93%A5%20Descargar%20APK&style=for-the-badge">
+  </a>
+</p>
+
+**📥 [Descargar la última versión del APK](https://github.com/ogarciabrena/ObdScanner/releases/latest)** — instálalo en Android 7+ y sigue el [tutorial](#tutorial-de-instalación).
+
 ```
 Adaptador OBD ──Bluetooth──> App Android (tableta/celular)
                               │ 1. Detecta el adaptador al conectarse → "¿Iniciar viaje?"
