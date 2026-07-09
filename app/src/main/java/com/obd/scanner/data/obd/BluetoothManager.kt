@@ -7,12 +7,12 @@ import com.obd.scanner.data.obd.protocol.Elm327
 import com.obd.scanner.domain.model.ConnectionState
 import com.obd.scanner.domain.model.ObdProtocol
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.io.InputStream
-import java.io.OutputStream
+import java.io.IOException
 import java.util.UUID
 
 class BluetoothManager {
@@ -58,11 +58,7 @@ class BluetoothManager {
     suspend fun connect(device: BluetoothDevice): Result<Unit> = withContext(Dispatchers.IO) {
         _connectionState.value = ConnectionState.Connecting
         try {
-            if (device.type == BluetoothDevice.DEVICE_TYPE_LE) {
-                connectBle(device)
-            } else {
-                connectClassic(device)
-            }
+            connectClassic(device)
             _connectionState.value = ConnectionState.Initializing
             val initResult = elm327?.initialize()
             if (initResult?.isSuccess == true) {
@@ -95,24 +91,44 @@ class BluetoothManager {
         device.address
     }
 
+    /**
+     * Cheap ELM327 clones often reject the standard secure SPP socket
+     * ("read failed, socket might closed... ret: -1"), so fall back through
+     * insecure SPP and then a direct RFCOMM channel-1 socket via reflection.
+     */
     private suspend fun connectClassic(device: BluetoothDevice) {
-        socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
         BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery()
-        socket?.connect()
-        elm327 = Elm327(
-            inputStream = socket!!.inputStream,
-            outputStream = socket!!.outputStream
-        )
-    }
 
-    private suspend fun connectBle(device: BluetoothDevice) {
-        val sock = device.createRfcommSocketToServiceRecord(SPP_UUID)
-        sock.connect()
-        socket = sock
-        elm327 = Elm327(
-            inputStream = socket!!.inputStream,
-            outputStream = socket!!.outputStream
+        val strategies: List<Pair<String, () -> BluetoothSocket>> = listOf(
+            "secure SPP" to { device.createRfcommSocketToServiceRecord(SPP_UUID) },
+            "insecure SPP" to { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
+            "RFCOMM channel 1" to {
+                device.javaClass
+                    .getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    .invoke(device, 1) as BluetoothSocket
+            }
         )
+
+        var lastError: Exception? = null
+        for ((_, createSocket) in strategies) {
+            val sock = try { createSocket() } catch (e: Exception) {
+                lastError = e; continue
+            }
+            try {
+                sock.connect()
+                socket = sock
+                elm327 = Elm327(
+                    inputStream = sock.inputStream,
+                    outputStream = sock.outputStream
+                )
+                return
+            } catch (e: Exception) {
+                try { sock.close() } catch (_: Exception) {}
+                lastError = e
+                delay(400)
+            }
+        }
+        throw lastError ?: IOException("No se pudo abrir el socket Bluetooth")
     }
 
     suspend fun disconnect() {
