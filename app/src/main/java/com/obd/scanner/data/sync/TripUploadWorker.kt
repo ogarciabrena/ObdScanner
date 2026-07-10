@@ -82,7 +82,14 @@ class TripUploadWorker(
                 )
             }
         }
-        if (startTs == 0L) return false
+        // Recovered partial trips may lack start/end records; derive them from
+        // the samples. A file with no samples at all is poison — delete it so
+        // it can't jam the upload queue with endless retries.
+        if (startTs == 0L) startTs = samples.firstOrNull()?.optLong("ts") ?: 0L
+        if (startTs == 0L) {
+            file.delete()
+            return true
+        }
         if (endTs == 0L) endTs = samples.lastOrNull()?.optLong("ts") ?: startTs
         if (sampleCount == 0) sampleCount = samples.size
 

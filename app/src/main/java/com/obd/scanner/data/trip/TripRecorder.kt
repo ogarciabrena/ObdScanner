@@ -29,6 +29,14 @@ class TripRecorder(context: Context) {
     /** Completed trips waiting for cloud upload. */
     val pendingDir = File(tripsDir, "pending").apply { mkdirs() }
 
+    init {
+        // Recover trips orphaned by a process kill mid-recording: empty files
+        // are unrecoverable noise; files with data are queued for upload.
+        tripsDir.listFiles { f -> f.isFile && f.extension == "jsonl" }?.forEach { f ->
+            if (f.length() == 0L) f.delete() else f.renameTo(File(pendingDir, f.name))
+        }
+    }
+
     private var writer: BufferedWriter? = null
     private var currentFile: File? = null
     private var startTime = 0L
