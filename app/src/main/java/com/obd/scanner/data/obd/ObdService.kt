@@ -76,10 +76,17 @@ class ObdService : Service() {
 
             var lastSpeed: String? = null
             var lastRpm: String? = null
+            val pidFailures = mutableMapOf<Int, Int>()
 
             while (isActive && bm.connectionState.value is ConnectionState.Connected) {
                 for (pid in DefaultPids) {
-                    val data = app.obdUseCase.getSensorData(pid) ?: continue
+                    if ((pidFailures[pid.pid] ?: 0) >= 3) continue
+                    val data = app.obdUseCase.getSensorData(pid)
+                    if (data == null) {
+                        pidFailures[pid.pid] = (pidFailures[pid.pid] ?: 0) + 1
+                        continue
+                    }
+                    pidFailures[pid.pid] = 0
                     app.tripRecorder.record(data)
                     when (pid.pid) {
                         0x0D -> lastSpeed = data.formattedValue

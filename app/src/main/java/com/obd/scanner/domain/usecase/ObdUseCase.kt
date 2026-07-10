@@ -13,18 +13,28 @@ class ObdUseCase(private val bluetoothManager: BluetoothManager) {
     val connectionState: StateFlow<ConnectionState> = bluetoothManager.connectionState
 
     suspend fun getSensorData(command: ObdCommand): SensorData? {
-        val elm = bluetoothManager.getElm327() ?: return null
+        val elm = bluetoothManager.getElm327()
+        if (elm == null) {
+            android.util.Log.w("ObdUseCase", "getSensorData(${command.name}): elm327 is NULL")
+            return null
+        }
         val result = elm.readPid(command.mode, command.pid)
-        if (result.isFailure) return null
+        if (result.isFailure) {
+            android.util.Log.w("ObdUseCase", "getSensorData(${command.name}): ${result.exceptionOrNull()?.message}")
+            return null
+        }
 
         val data = result.getOrNull() ?: return null
-        if (data.isEmpty()) return null
+        if (data.isEmpty()) {
+            android.util.Log.w("ObdUseCase", "getSensorData(${command.name}): empty parse")
+            return null
+        }
 
         val rawData = if (data.size >= command.bytes) data.take(command.bytes) else data
         val value = command.formula.evaluate(rawData)
 
         val formatted = when {
-            command.unit == "°C" || command.unit == "°" -> String.format("%.1f%s", value, command.unit)
+            command.unit == "°C" || command.unit == "°" -> "%.1f".format(value)
             command.unit == "rpm" -> "%.0f".format(value)
             command.unit == "km/h" -> "%.0f".format(value)
             command.unit == "%" -> "%.1f".format(value)

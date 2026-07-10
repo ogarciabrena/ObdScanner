@@ -16,6 +16,7 @@ class Elm327(
     private val inputStream: InputStream,
     private val outputStream: OutputStream
 ) {
+    private val TAG = "Elm327"
     private var isInitialized = false
     private var detectedProtocol: ObdProtocol = ObdProtocol.AUTO
 
@@ -115,6 +116,7 @@ class Elm327(
     suspend fun sendCommand(command: String) {
         // Drain any stale bytes from a previous (timed-out) exchange
         while (inputStream.available() > 0) inputStream.read()
+        android.util.Log.d(TAG, ">> $command")
         outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
         outputStream.flush()
     }
@@ -175,6 +177,9 @@ class Elm327(
                 val cmd = String.format("%02X%02X", mode, pid)
                 val response = tryRequest(cmd) ?: return@withLock Result.failure(Exception("No response"))
                 val data = parsePidResponse(response, mode, pid)
+                if (data.isEmpty()) {
+                    android.util.Log.w(TAG, "unparsed response for $cmd: '$response'")
+                }
                 Result.success(data)
             } catch (e: Exception) {
                 Result.failure(e)
@@ -190,11 +195,13 @@ class Elm327(
     }
 
     private suspend fun readRawResponse(timeoutMs: Long): String {
-        return readUntilPrompt(timeoutMs)
+        val resp = readUntilPrompt(timeoutMs)
             .replace('\r', ' ')
             .replace('\n', ' ')
             .replace("\\s+".toRegex(), " ")
             .trim()
+        android.util.Log.d(TAG, "<< $resp")
+        return resp
     }
 
     private fun parsePidResponse(data: String, mode: Int, pid: Int): List<Int> {

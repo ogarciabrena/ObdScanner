@@ -51,6 +51,10 @@ class DashboardViewModel(
 
     private var scanJob: Job? = null
 
+    // PIDs the vehicle doesn't support waste a full timeout per cycle;
+    // after MAX_PID_FAILURES consecutive misses they're skipped.
+    private val pidFailures = mutableMapOf<Int, Int>()
+
     init {
         viewModelScope.launch {
             obdUseCase.connectionState.collect { connState ->
@@ -66,14 +70,19 @@ class DashboardViewModel(
 
     fun startScanning() {
         if (scanJob?.isActive == true) return
+        pidFailures.clear()
         _state.value = _state.value.copy(isScanning = true)
         scanJob = viewModelScope.launch {
             while (isActive) {
                 val sensors = mutableMapOf<Int, SensorData>()
                 for (pid in _state.value.selectedPids) {
+                    if ((pidFailures[pid.pid] ?: 0) >= MAX_PID_FAILURES) continue
                     val data = obdUseCase.getSensorData(pid)
                     if (data != null) {
+                        pidFailures[pid.pid] = 0
                         sensors[pid.pid] = data
+                    } else {
+                        pidFailures[pid.pid] = (pidFailures[pid.pid] ?: 0) + 1
                     }
                     delay(10)
                 }
@@ -81,6 +90,10 @@ class DashboardViewModel(
                 delay(100)
             }
         }
+    }
+
+    private companion object {
+        const val MAX_PID_FAILURES = 3
     }
 
     fun stopScanning() {
