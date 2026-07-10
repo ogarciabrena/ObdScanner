@@ -74,19 +74,22 @@ class DashboardViewModel(
         _state.value = _state.value.copy(isScanning = true)
         scanJob = viewModelScope.launch {
             while (isActive) {
-                val sensors = mutableMapOf<Int, SensorData>()
                 for (pid in _state.value.selectedPids) {
                     if ((pidFailures[pid.pid] ?: 0) >= MAX_PID_FAILURES) continue
                     val data = obdUseCase.getSensorData(pid)
                     if (data != null) {
                         pidFailures[pid.pid] = 0
-                        sensors[pid.pid] = data
+                        // Publish each reading as it arrives: while a trip is
+                        // recording, the shared ELM327 channel halves the scan
+                        // rate and a whole-cycle batch would look frozen.
+                        _state.value = _state.value.copy(
+                            sensors = _state.value.sensors + (pid.pid to data)
+                        )
                     } else {
                         pidFailures[pid.pid] = (pidFailures[pid.pid] ?: 0) + 1
                     }
                     delay(10)
                 }
-                _state.value = _state.value.copy(sensors = sensors)
                 delay(100)
             }
         }

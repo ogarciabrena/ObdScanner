@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.obd.scanner.ObdScannerApp
 import com.obd.scanner.data.sync.TripUploadWorker
+import com.obd.scanner.data.sync.testSupabaseConnection
 import kotlinx.coroutines.launch
 
 @Composable
@@ -48,8 +49,10 @@ fun SettingsScreen() {
     var url by remember { mutableStateOf("") }
     var key by remember { mutableStateOf("") }
     var configured by remember { mutableStateOf(false) }
-    var saved by remember { mutableStateOf(false) }
     var pendingCount by remember { mutableStateOf(0) }
+    var testing by remember { mutableStateOf(false) }
+    var testOk by remember { mutableStateOf<Boolean?>(null) }
+    var testMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         val creds = app.syncSettings.current()
@@ -107,7 +110,7 @@ fun SettingsScreen() {
 
                 OutlinedTextField(
                     value = url,
-                    onValueChange = { url = it; saved = false },
+                    onValueChange = { url = it; testOk = null; testMessage = null },
                     label = { Text("Project URL") },
                     placeholder = { Text("https://xxxx.supabase.co") },
                     singleLine = true,
@@ -117,7 +120,7 @@ fun SettingsScreen() {
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = key,
-                    onValueChange = { key = it; saved = false },
+                    onValueChange = { key = it; testOk = null; testMessage = null },
                     label = { Text("Publishable (anon) key") },
                     placeholder = { Text("sb_publishable_…") },
                     singleLine = true,
@@ -126,15 +129,26 @@ fun SettingsScreen() {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = {
-                        scope.launch {
-                            app.syncSettings.save(url, key)
-                            val creds = app.syncSettings.current()
-                            configured = creds.isConfigured
-                            saved = true
-                            if (creds.isConfigured) TripUploadWorker.enqueue(context)
-                        }
-                    }) { Text("Guardar") }
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                testing = true
+                                testMessage = null
+                                val (ok, msg) = testSupabaseConnection(url, key)
+                                testOk = ok
+                                if (ok) {
+                                    app.syncSettings.save(url, key)
+                                    configured = app.syncSettings.current().isConfigured
+                                    testMessage = "Guardado — $msg"
+                                    TripUploadWorker.enqueue(context)
+                                } else {
+                                    testMessage = "No guardado — $msg"
+                                }
+                                testing = false
+                            }
+                        },
+                        enabled = !testing
+                    ) { Text(if (testing) "Verificando..." else "Verificar y guardar") }
 
                     if (pendingCount > 0) {
                         Spacer(modifier = Modifier.padding(horizontal = 6.dp))
@@ -143,14 +157,16 @@ fun SettingsScreen() {
                             enabled = configured
                         ) { Text("Subir ahora ($pendingCount)") }
                     }
+                }
 
-                    if (saved) {
-                        Text(
-                            text = "  ✓ Guardado",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
+                testMessage?.let { msg ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = (if (testOk == true) "✓ " else "✗ ") + msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (testOk == true) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

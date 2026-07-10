@@ -46,6 +46,9 @@ class TripRecorder(context: Context) {
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
+    private val _sampleCountFlow = MutableStateFlow(0)
+    val sampleCountFlow: StateFlow<Int> = _sampleCountFlow.asStateFlow()
+
     @Synchronized
     fun start(deviceName: String) {
         if (_isRecording.value) return
@@ -57,6 +60,7 @@ class TripRecorder(context: Context) {
         writer = BufferedWriter(FileWriter(file, true))
         writer?.write("""{"type":"start","ts":$startTime,"device":${jsonString(deviceName)}}""")
         writer?.newLine()
+        _sampleCountFlow.value = 0
         _isRecording.value = true
     }
 
@@ -69,6 +73,7 @@ class TripRecorder(context: Context) {
         )
         w.newLine()
         sampleCount++
+        _sampleCountFlow.value = sampleCount
         if (sampleCount % 50 == 0) w.flush()
     }
 
