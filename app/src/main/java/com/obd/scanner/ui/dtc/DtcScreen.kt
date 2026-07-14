@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.obd.scanner.data.obd.BluetoothManager
 import com.obd.scanner.domain.model.Dtc
 import com.obd.scanner.domain.model.DtcSystem
+import com.obd.scanner.domain.model.SensorData
 import com.obd.scanner.domain.usecase.ObdUseCase
 import kotlinx.coroutines.launch
 
@@ -48,7 +49,10 @@ fun DtcScreen(
 ) {
     val scope = rememberCoroutineScope()
     var dtcList by remember { mutableStateOf<List<Dtc>>(emptyList()) }
+    var pendingList by remember { mutableStateOf<List<Dtc>>(emptyList()) }
+    var freezeFrame by remember { mutableStateOf<List<SensorData>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var hasScanned by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     var showResult by remember { mutableStateOf<String?>(null) }
 
@@ -70,25 +74,29 @@ fun DtcScreen(
                 onClick = {
                     scope.launch {
                         isLoading = true
+                        showResult = null
                         dtcList = obdUseCase.readDtc()
+                        pendingList = obdUseCase.readPendingDtc()
+                        freezeFrame = if (dtcList.isNotEmpty()) obdUseCase.getFreezeFrame() else emptyList()
+                        hasScanned = true
                         isLoading = false
                     }
                 },
                 enabled = isConnected && !isLoading
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null)
-                Text("Read DTCs", modifier = Modifier.padding(start = 4.dp))
+                Text("Leer códigos", modifier = Modifier.padding(start = 4.dp))
             }
 
             Button(
                 onClick = { showClearDialog = true },
-                enabled = isConnected && dtcList.isNotEmpty(),
+                enabled = isConnected && (dtcList.isNotEmpty() || pendingList.isNotEmpty()),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error
                 )
             ) {
                 Icon(Icons.Default.Delete, contentDescription = null)
-                Text("Clear", modifier = Modifier.padding(start = 4.dp))
+                Text("Borrar", modifier = Modifier.padding(start = 4.dp))
             }
         }
 
@@ -109,9 +117,9 @@ fun DtcScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text("Reading DTCs...", style = MaterialTheme.typography.bodyLarge)
+                Text("Leyendo códigos...", style = MaterialTheme.typography.bodyLarge)
             }
-        } else if (dtcList.isEmpty()) {
+        } else if (dtcList.isEmpty() && pendingList.isEmpty()) {
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -125,23 +133,73 @@ fun DtcScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = if (isConnected) "No trouble codes found"
-                    else "Connect to an OBD adapter first",
+                    text = when {
+                        !isConnected -> "Conéctate a un adaptador OBD primero"
+                        hasScanned -> "✓ Sin códigos de falla — todo en orden"
+                        else -> "Pulsa \"Leer códigos\" para revisar el vehículo"
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         } else {
-            Text(
-                text = "${dtcList.size} code(s) found",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.error
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(dtcList) { dtc ->
-                    DtcCard(dtc = dtc)
+                if (dtcList.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Confirmados (${dtcList.size}) — encienden el check-engine",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    items(dtcList) { dtc -> DtcCard(dtc = dtc) }
+                }
+
+                if (pendingList.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Pendientes (${pendingList.size}) — detectados, aún sin confirmar",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+                    items(pendingList) { dtc -> DtcCard(dtc = dtc) }
+                }
+
+                if (freezeFrame.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Freeze Frame — condiciones cuando saltó la falla",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                freezeFrame.forEach { s ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(s.name, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            s.formattedValue,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -156,12 +214,16 @@ fun DtcScreen(
                 TextButton(onClick = {
                     scope.launch {
                         val success = obdUseCase.clearDtc()
-                        showResult = if (success) "DTCs cleared successfully" else "Failed to clear DTCs"
-                        if (success) dtcList = emptyList()
+                        showResult = if (success) "Códigos borrados" else "No se pudieron borrar"
+                        if (success) {
+                            dtcList = emptyList()
+                            pendingList = emptyList()
+                            freezeFrame = emptyList()
+                        }
                     }
                     showClearDialog = false
                 }) {
-                    Text("Clear", color = MaterialTheme.colorScheme.error)
+                    Text("Borrar", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {

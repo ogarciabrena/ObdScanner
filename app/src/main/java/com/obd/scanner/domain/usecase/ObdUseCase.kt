@@ -30,6 +30,11 @@ class ObdUseCase(private val bluetoothManager: BluetoothManager) {
             return null
         }
 
+        return toSensorData(command, data)
+    }
+
+    private fun toSensorData(command: ObdCommand, data: List<Int>): SensorData? {
+        if (data.isEmpty()) return null
         val rawData = if (data.size >= command.bytes) data.take(command.bytes) else data
         val value = command.formula.evaluate(rawData)
 
@@ -63,6 +68,29 @@ class ObdUseCase(private val bluetoothManager: BluetoothManager) {
         val elm = bluetoothManager.getElm327() ?: return emptyList()
         val result = elm.readDtc()
         return result.getOrNull() ?: emptyList()
+    }
+
+    /** Mode 07: faults detected in the current cycle, not yet confirmed (before the MIL turns on). */
+    suspend fun readPendingDtc(): List<Dtc> {
+        val elm = bluetoothManager.getElm327() ?: return emptyList()
+        val result = elm.readPendingDtc()
+        return result.getOrNull() ?: emptyList()
+    }
+
+    /** Mode 02: sensor snapshot captured when the current stored DTC was set. */
+    suspend fun getFreezeFrame(): List<SensorData> {
+        val elm = bluetoothManager.getElm327() ?: return emptyList()
+        val pids = listOf(
+            ObdPids.ENGINE_RPM, ObdPids.VEHICLE_SPEED, ObdPids.COOLANT_TEMP,
+            ObdPids.ENGINE_LOAD, ObdPids.SHORT_FUEL_TRIM_B1, ObdPids.LONG_FUEL_TRIM_B1,
+            ObdPids.INTAKE_MAP, ObdPids.THROTTLE_POS
+        )
+        val out = mutableListOf<SensorData>()
+        for (cmd in pids) {
+            val data = elm.readFreezeFramePid(cmd.pid).getOrNull() ?: continue
+            toSensorData(cmd, data)?.let { out.add(it) }
+        }
+        return out
     }
 
     suspend fun clearDtc(): Boolean {

@@ -1,6 +1,7 @@
 package com.obd.scanner.data.obd.protocol
 
 import com.obd.scanner.domain.model.Dtc
+import com.obd.scanner.domain.model.DtcStatus
 import com.obd.scanner.domain.model.ObdProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -159,6 +160,32 @@ class Elm327(
         }
     }
 
+    suspend fun readPendingDtc(): Result<List<Dtc>> = withContext(Dispatchers.IO) {
+        ioMutex.withLock {
+            try {
+                sendCommand("07")
+                val response = readRawResponse(2000)
+                val codes = parseDtc(response).map { it.copy(status = DtcStatus.PENDING) }
+                Result.success(codes)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    /** Mode 02 freeze-frame: request "02 <PID> 00" (frame 0). */
+    suspend fun readFreezeFramePid(pid: Int): Result<List<Int>> = withContext(Dispatchers.IO) {
+        ioMutex.withLock {
+            try {
+                val cmd = String.format("02%02X00", pid)
+                val response = tryRequest(cmd) ?: return@withLock Result.failure(Exception("No response"))
+                Result.success(parseFreezeFrameResponse(response))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
     suspend fun clearDtc(): Result<Boolean> = withContext(Dispatchers.IO) {
         ioMutex.withLock {
             try {
@@ -202,6 +229,18 @@ class Elm327(
             .trim()
         android.util.Log.d(TAG, "<< $resp")
         return resp
+    }
+
+    /** Mode 02 response is "42 <PID> <frame> <data...>" — drop the 3 header bytes. */
+    private fun parseFreezeFrameResponse(data: String): List<Int> {
+        val bytes = data.split(" ")
+            .filter { it.matches(Regex("^[0-9A-Fa-f]{2}$")) }
+            .map { it.toInt(16) }
+        val modeIdx = bytes.indexOfFirst { it == 0x42 }
+        if (modeIdx < 0) return emptyList()
+        val dataStart = modeIdx + 3
+        if (dataStart >= bytes.size) return emptyList()
+        return bytes.drop(dataStart)
     }
 
     private fun parsePidResponse(data: String, mode: Int, pid: Int): List<Int> {
