@@ -198,6 +198,39 @@ class Elm327(
         }
     }
 
+    /** Mode 09 PID 02: número de serie del vehículo (VIN), 17 caracteres. */
+    suspend fun readVin(): Result<String?> = withContext(Dispatchers.IO) {
+        ioMutex.withLock {
+            try {
+                sendCommand("0902")
+                val resp = readRawResponse(4000)
+                Result.success(parseVin(resp))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    private fun parseVin(resp: String): String? {
+        val b = resp.split(" ")
+            .filter { it.matches(Regex("^[0-9A-Fa-f]{2}$")) }
+            .map { it.toInt(16) }
+        for (i in 0 until b.size - 1) {
+            if (b[i] == 0x49 && b[i + 1] == 0x02) {
+                var data = b.drop(i + 2)
+                if (data.isNotEmpty() && data[0] <= 0x10) data = data.drop(1)  // NODI
+                val text = data.filter { it in 32..126 }.map { it.toChar() }.joinToString("")
+                val clean = text.filter { it.isLetterOrDigit() }
+                return when {
+                    clean.length >= 17 -> clean.takeLast(17)
+                    clean.isNotBlank() -> clean
+                    else -> null
+                }
+            }
+        }
+        return null
+    }
+
     suspend fun readPid(mode: Int, pid: Int): Result<List<Int>> = withContext(Dispatchers.IO) {
         ioMutex.withLock {
             try {

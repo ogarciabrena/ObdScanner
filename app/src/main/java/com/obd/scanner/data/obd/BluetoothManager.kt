@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothSocket
 import com.obd.scanner.data.obd.protocol.Elm327
 import com.obd.scanner.domain.model.ConnectionState
 import com.obd.scanner.domain.model.ObdProtocol
+import com.obd.scanner.domain.model.VehicleInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,9 @@ class BluetoothManager {
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    private val _vehicleInfo = MutableStateFlow<VehicleInfo?>(null)
+    val vehicleInfo: StateFlow<VehicleInfo?> = _vehicleInfo.asStateFlow()
 
     private var socket: BluetoothSocket? = null
     private var elm327: Elm327? = null
@@ -66,6 +70,9 @@ class BluetoothManager {
                     deviceName = safeDeviceName(device),
                     protocol = initResult.getOrNull() ?: ObdProtocol.AUTO
                 )
+                // Lee el VIN una vez conectado (no bloquea el resultado si falla)
+                val vin = elm327?.readVin()?.getOrNull()
+                _vehicleInfo.value = vin?.takeIf { it.length >= 11 }?.let { VehicleInfo.fromVin(it) }
                 Result.success(Unit)
             } else {
                 disconnect()
@@ -139,6 +146,7 @@ class BluetoothManager {
                 socket?.close()
             } catch (_: Exception) {}
             socket = null
+            _vehicleInfo.value = null
             _connectionState.value = ConnectionState.Disconnected
         }
     }

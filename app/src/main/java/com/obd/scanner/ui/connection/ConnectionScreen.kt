@@ -85,6 +85,7 @@ fun ConnectionScreen(
 
     val pairedDevices by bluetoothManager.pairedDevices.collectAsState()
     val connectionState by bluetoothManager.connectionState.collectAsState()
+    val vehicleInfo by bluetoothManager.vehicleInfo.collectAsState()
 
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
@@ -118,6 +119,7 @@ fun ConnectionScreen(
 
         ConnectionStatusCard(
             connectionState = connectionState,
+            vehicleInfo = vehicleInfo,
             onDisconnect = { scope.launch { bluetoothManager.disconnect() } }
         )
         Spacer(modifier = Modifier.height(12.dp))
@@ -246,14 +248,15 @@ fun ConnectionScreen(
 @Composable
 private fun ConnectionStatusCard(
     connectionState: ConnectionState,
+    vehicleInfo: com.obd.scanner.domain.model.VehicleInfo?,
     onDisconnect: () -> Unit
 ) {
     val (statusText, statusColor) = when (connectionState) {
-        is ConnectionState.Connected -> "Connected to ${connectionState.deviceName}" to MaterialTheme.colorScheme.primary
-        is ConnectionState.Connecting -> "Connecting..." to MaterialTheme.colorScheme.tertiary
-        is ConnectionState.Initializing -> "Initializing ELM327..." to MaterialTheme.colorScheme.tertiary
+        is ConnectionState.Connected -> "Conectado a ${connectionState.deviceName}" to MaterialTheme.colorScheme.primary
+        is ConnectionState.Connecting -> "Conectando..." to MaterialTheme.colorScheme.tertiary
+        is ConnectionState.Initializing -> "Inicializando ELM327..." to MaterialTheme.colorScheme.tertiary
         is ConnectionState.Error -> connectionState.message to MaterialTheme.colorScheme.error
-        is ConnectionState.Disconnected -> "Not connected" to MaterialTheme.colorScheme.onSurfaceVariant
+        is ConnectionState.Disconnected -> "Sin conexión" to MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     Card(
@@ -262,34 +265,50 @@ private fun ConnectionStatusCard(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                when (connectionState) {
-                    is ConnectionState.Connecting, is ConnectionState.Initializing ->
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    is ConnectionState.Connected ->
-                        Icon(Icons.Default.BluetoothConnected, contentDescription = null, tint = statusColor)
-                    else ->
-                        Icon(Icons.Default.Bluetooth, contentDescription = null, tint = statusColor)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    when (connectionState) {
+                        is ConnectionState.Connecting, is ConnectionState.Initializing ->
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        is ConnectionState.Connected ->
+                            Icon(Icons.Default.BluetoothConnected, contentDescription = null, tint = statusColor)
+                        else ->
+                            Icon(Icons.Default.Bluetooth, contentDescription = null, tint = statusColor)
+                    }
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = statusColor,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
                 }
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = statusColor,
-                    modifier = Modifier.padding(start = 12.dp)
-                )
+                if (connectionState is ConnectionState.Connected) {
+                    OutlinedButton(onClick = onDisconnect) {
+                        Text("Desconectar")
+                    }
+                }
             }
-            if (connectionState is ConnectionState.Connected) {
-                OutlinedButton(onClick = onDisconnect) {
-                    Text("Disconnect")
-                }
+
+            if (connectionState is ConnectionState.Connected && vehicleInfo != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = vehicleInfo.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "VIN: ${vehicleInfo.vin}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
