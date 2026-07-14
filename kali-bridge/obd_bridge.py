@@ -128,31 +128,88 @@ class Elm327:
         clean = "".join(c for c in vin if c.isalnum())
         return clean[-17:] if len(clean) >= 17 else (clean or None)
 
+    def _drain(self, quiet=0.4):
+        """Vacía cualquier trama residual hasta que el canal quede en silencio."""
+        last = time.time()
+        while time.time() - last < quiet:
+            if self.ser.read(1):
+                last = time.time()
+
+    def _mode9_frames(self, pid):
+        """Modo 09 con headers OFF y filtro al ECU del motor (7E8), para que no
+        se mezclen las respuestas de varios módulos. Devuelve payloads (bytes
+        tras '49 <pid> <NODI>')."""
+        self.cmd("ATH0", 1.0)
+        self.cmd("ATCRA 7E8", 1.0)   # solo respuestas del ECU del motor
+        resp = self.cmd(f"09{pid:02X}", 5.0)
+        self._drain()
+        self.cmd("ATCRA", 1.0)       # limpia el filtro
+        self.cmd("ATH1", 1.0)
+        self._drain()
+        if "NO DATA" in resp or not resp:
+            return []
+        payloads = []
+        b = self._hex_bytes(resp)
+        i = 0
+        while i < len(b) - 1:
+            if b[i] == 0x49 and b[i + 1] == pid:
+                data = b[i + 2:]
+                if data and data[0] <= 0x10:  # NODI (nº de mensajes)
+                    data = data[1:]
+                payloads.append(data)
+                i += 2
+            else:
+                i += 1
+        return payloads
+
+    def read_calid(self):
+        """Mode 09 PID 04: ID de calibración del software de la ECU (texto)."""
+        best = ""
+        for data in self._mode9_frames(0x04):
+            s = "".join(chr(x) for x in data if 32 <= x <= 126).strip()
+            if len(s) > len(best):
+                best = s
+        return best or None
+
+    def read_cvn(self):
+        """Mode 09 PID 06: Calibration Verification Number — checksum del firmware.
+        Distinto al de fábrica = software modificado (remapeo o actualización)."""
+        frames = self._mode9_frames(0x06)
+        if not frames:
+            return None
+        data = frames[0]
+        return " ".join(f"{x:02X}" for x in data[:4]) if data else None
+
     @staticmethod
     def _parse_dtcs(resp, mode=3):
         """
-        Con headers ON (ATH1) la respuesta CAN llega por trama, ej:
-            7E9 02 43 00    (módulo transmisión: modo 43, 0 DTCs)
-            7E8 02 43 00    (módulo motor: modo 43, 0 DTCs)
-        Por cada trama: descartamos header (7Ex, 3 chars) y PCI, buscamos el
-        byte de modo (0x43 mode 3 / 0x47 mode 7) y parseamos pares de DTC.
+        Respuesta CAN con headers ON (ATH1). Cada ECU manda una trama tipo:
+            7E9 02 43 00    (modo 43 = resp. a 03; PCI 02 = 2 bytes útiles)
+            7E8 02 43 00
+        Se parsea CONSCIENTE de la trama: el byte antes del 0x43 es el PCI
+        (longitud); tomamos exactamente PCI-1 bytes tras el modo como datos DTC.
+        Así no se mezclan las tramas de dos módulos (bug de leer 'todo tras 43').
         """
         mode_byte = 0x40 + mode
+        # aplana todas las tramas a una lista de bytes (7E8/7E9 son 3 chars y
+        # los descarta el filtro hex de 2 chars)
+        b = Elm327._hex_bytes(resp.replace("\r", " ").replace("\n", " "))
         codes = []
-        for line in resp.replace("\r", "\n").split("\n"):
-            b = Elm327._hex_bytes(line)  # 7E8/7E9 (3 chars) se descartan solos
-            if mode_byte not in b:
-                continue
-            data = b[b.index(mode_byte) + 1:]
-            # algunos ECUs anteponen un byte de conteo de DTCs; los pares 00 00
-            # (sin falla) se ignoran, así que no estorba
-            for i in range(0, len(data) - 1, 2):
-                hi, lo = data[i], data[i + 1]
-                if hi == 0 and lo == 0:
-                    continue
-                code = DTC_PREFIX[(hi & 0xC0) >> 6] + f"{hi & 0x3F:02X}{lo:02X}"
-                if code not in codes:
-                    codes.append(code)
+        i = 1
+        while i < len(b):
+            if b[i] == mode_byte:
+                pci = b[i - 1] & 0x0F          # nº de bytes útiles de la trama
+                data = b[i + 1: i + pci]       # PCI-1 bytes tras el modo
+                for j in range(0, len(data) - 1, 2):
+                    hi, lo = data[j], data[j + 1]
+                    if hi == 0 and lo == 0:
+                        continue
+                    code = DTC_PREFIX[(hi & 0xC0) >> 6] + f"{hi & 0x3F:02X}{lo:02X}"
+                    if code not in codes:
+                        codes.append(code)
+                i += pci
+            else:
+                i += 1
         return codes
 
     def close(self):
@@ -188,9 +245,8 @@ def full_scan(elm):
     print("[*] Inicializando ELM327...")
     elm.init()
 
-    report["vin"] = elm.read_vin()
-    print(f"    VIN: {report['vin']}")
-
+    # DTCs primero, sobre buffer limpio recién inicializado (el Modo 09 es
+    # multi-trama y su cola residual puede contaminar la lectura de DTCs)
     print("[*] Leyendo códigos de falla...")
     report["stored_dtcs"] = elm.read_dtcs(3)
     report["pending_dtcs"] = elm.read_dtcs(7)
@@ -218,6 +274,15 @@ def full_scan(elm):
                 live.append(r)
                 print(f"    {r['name']}: {r['value']} {r['unit']}")
     report["live"] = live
+
+    # Modo 09 al final: es multi-trama y su cola no debe contaminar los DTCs
+    report["vin"] = elm.read_vin()
+    print(f"[*] VIN: {report['vin']}")
+    print("[*] Leyendo calibración de la ECU (detección de remapeo)...")
+    report["calid"] = elm.read_calid()
+    report["cvn"] = elm.read_cvn()
+    print(f"    CALID: {report['calid']}")
+    print(f"    CVN:   {report['cvn']}  (comparar con el de fábrica para ver si está modificada)")
     return report
 
 
