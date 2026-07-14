@@ -79,7 +79,9 @@ class Elm327:
         return self._read_until_prompt(timeout)
 
     def init(self):
-        for c in ("ATZ", "ATE0", "ATL0", "ATS1", "ATH0", "ATSP0"):
+        # ATH1 (headers ON) para poder separar por trama CAN y descartar
+        # los bytes de dirección/longitud al parsear DTCs.
+        for c in ("ATZ", "ATE0", "ATL0", "ATS1", "ATH1", "ATSP0"):
             self.cmd(c, 2.0)
             time.sleep(0.1)
         # provoca la autodetección de protocolo
@@ -115,7 +117,7 @@ class Elm327:
 
     def read_dtcs(self, mode=3):
         resp = self.cmd(f"{mode:02X}")
-        return self._parse_dtcs(resp)
+        return self._parse_dtcs(resp, mode)
 
     def read_vin(self):
         resp = self.cmd("0902", 4.0)
@@ -127,18 +129,30 @@ class Elm327:
         return clean[-17:] if len(clean) >= 17 else (clean or None)
 
     @staticmethod
-    def _parse_dtcs(resp):
-        b = Elm327._hex_bytes(resp)
-        # descarta byte de modo (43/47) y de conteo si viene
-        if b and b[0] in (0x43, 0x47):
-            b = b[1:]
+    def _parse_dtcs(resp, mode=3):
+        """
+        Con headers ON (ATH1) la respuesta CAN llega por trama, ej:
+            7E9 02 43 00    (módulo transmisión: modo 43, 0 DTCs)
+            7E8 02 43 00    (módulo motor: modo 43, 0 DTCs)
+        Por cada trama: descartamos header (7Ex, 3 chars) y PCI, buscamos el
+        byte de modo (0x43 mode 3 / 0x47 mode 7) y parseamos pares de DTC.
+        """
+        mode_byte = 0x40 + mode
         codes = []
-        for i in range(0, len(b) - 1, 2):
-            hi, lo = b[i], b[i + 1]
-            if hi == 0 and lo == 0:
+        for line in resp.replace("\r", "\n").split("\n"):
+            b = Elm327._hex_bytes(line)  # 7E8/7E9 (3 chars) se descartan solos
+            if mode_byte not in b:
                 continue
-            code = DTC_PREFIX[(hi & 0xC0) >> 6] + f"{hi & 0x3F:02X}{lo:02X}"
-            codes.append(code)
+            data = b[b.index(mode_byte) + 1:]
+            # algunos ECUs anteponen un byte de conteo de DTCs; los pares 00 00
+            # (sin falla) se ignoran, así que no estorba
+            for i in range(0, len(data) - 1, 2):
+                hi, lo = data[i], data[i + 1]
+                if hi == 0 and lo == 0:
+                    continue
+                code = DTC_PREFIX[(hi & 0xC0) >> 6] + f"{hi & 0x3F:02X}{lo:02X}"
+                if code not in codes:
+                    codes.append(code)
         return codes
 
     def close(self):
