@@ -6,7 +6,9 @@
 alter table trips     add column if not exists user_id uuid default auth.uid();
 alter table telemetry add column if not exists user_id uuid default auth.uid();
 
--- 2. Quitar las políticas anónimas antiguas (acceso abierto)
+-- 2. Quitar las políticas anónimas antiguas (acceso abierto).
+--    IMPORTANTE: si estas no se borran, cualquiera con la anon key vería
+--    TODOS los datos. Verifica al final que ya no existan (paso de control).
 drop policy if exists "anon insert trips"      on trips;
 drop policy if exists "anon update trips"      on trips;
 drop policy if exists "anon read trips"        on trips;
@@ -28,3 +30,8 @@ create policy "own telemetry select" on telemetry
 
 -- 4. La vista legible hereda la seguridad de la tabla telemetry
 --    (no requiere cambios)
+
+-- 5. CONTROL: esta consulta debe devolver SOLO políticas de rol 'authenticated'.
+--    Si aparece alguna de rol 'anon', bórrala a mano (el drop de arriba no corrió).
+select tablename, policyname, roles::text
+from pg_policies where tablename in ('trips','telemetry') order by 1,2;
