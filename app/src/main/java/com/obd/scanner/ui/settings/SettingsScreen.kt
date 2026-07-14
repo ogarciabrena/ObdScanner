@@ -35,6 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.obd.scanner.ObdScannerApp
 import com.obd.scanner.data.sync.TripUploadWorker
 import com.obd.scanner.data.sync.testSupabaseConnection
@@ -53,6 +56,15 @@ fun SettingsScreen() {
     var testing by remember { mutableStateOf(false) }
     var testOk by remember { mutableStateOf<Boolean?>(null) }
     var testMessage by remember { mutableStateOf<String?>(null) }
+
+    // --- Cuenta (Supabase Auth) ---
+    val loggedEmail by app.authManager.emailFlow.collectAsState(initial = null)
+    val isLoggedIn by app.authManager.isLoggedInFlow.collectAsState(initial = false)
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var authBusy by remember { mutableStateOf(false) }
+    var authMessage by remember { mutableStateOf<String?>(null) }
+    var authOk by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(Unit) {
         val creds = app.syncSettings.current()
@@ -175,6 +187,118 @@ fun SettingsScreen() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // ---- Cuenta (Supabase Auth) ----
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.AccountCircle, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        text = "Cuenta",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (isLoggedIn) {
+                    Text(
+                        text = "Sesión iniciada como:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = loggedEmail ?: "usuario",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tus viajes se suben a tu cuenta. Cambia de cuenta para separar los datos de otro vehículo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(onClick = { scope.launch { app.authManager.signOut() } }) {
+                        Text("Cerrar sesión")
+                    }
+                } else {
+                    Text(
+                        text = "Inicia sesión para que tus viajes se guarden en tu cuenta. Cada cuenta separa los datos (ideal para varios vehículos).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it; authMessage = null },
+                        label = { Text("Email") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it; authMessage = null },
+                        label = { Text("Contraseña") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row {
+                        Button(
+                            enabled = !authBusy && email.isNotBlank() && password.length >= 6,
+                            onClick = {
+                                scope.launch {
+                                    authBusy = true; authMessage = null
+                                    val r = app.authManager.signIn(email, password)
+                                    authOk = r.ok; authMessage = r.message
+                                    if (r.ok) TripUploadWorker.enqueue(context)
+                                    authBusy = false
+                                }
+                            }
+                        ) { Text(if (authBusy) "..." else "Iniciar sesión") }
+
+                        Spacer(modifier = Modifier.padding(horizontal = 6.dp))
+
+                        OutlinedButton(
+                            enabled = !authBusy && email.isNotBlank() && password.length >= 6,
+                            onClick = {
+                                scope.launch {
+                                    authBusy = true; authMessage = null
+                                    val r = app.authManager.signUp(email, password)
+                                    authOk = r.ok; authMessage = r.message
+                                    if (r.ok) TripUploadWorker.enqueue(context)
+                                    authBusy = false
+                                }
+                            }
+                        ) { Text("Registrarse") }
+                    }
+
+                    authMessage?.let { msg ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = (if (authOk == true) "✓ " else "✗ ") + msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (authOk == true) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
         }
 

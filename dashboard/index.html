@@ -70,7 +70,10 @@ details summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-bottom:8
   <div style="display:grid;gap:8px;max-width:560px">
     <input id="cfgUrl" placeholder="https://xxxx.supabase.co" style="font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--ink-1)">
     <input id="cfgKey" placeholder="sb_publishable_…" style="font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--ink-1)">
-    <div><button id="cfgSave">Guardar y conectar</button></div>
+    <input id="cfgEmail" placeholder="email (mismo que en la app)" style="font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--ink-1)">
+    <input id="cfgPass" type="password" placeholder="contraseña" style="font:inherit;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--ink-1)">
+    <div><button id="cfgSave">Iniciar sesión y ver mis viajes</button></div>
+    <div id="cfgMsg" class="muted"></div>
   </div>
 </div>
 
@@ -111,6 +114,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-bottom:8
 // Credenciales del usuario — guardadas en localStorage de este navegador.
 let SB_URL = localStorage.getItem("sb_url") || "";
 let SB_KEY = localStorage.getItem("sb_key") || "";
+let SB_TOKEN = localStorage.getItem("sb_token") || "";   // access token del usuario
 const PID = { SPEED:13, RPM:12, COOLANT:5 };
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
@@ -120,17 +124,35 @@ function showConfig(show){
   document.getElementById("cfgKey").value = SB_KEY;
 }
 document.getElementById("cfgBtn").onclick = () => showConfig(document.getElementById("cfgCard").style.display==="none");
-document.getElementById("cfgSave").onclick = () => {
+document.getElementById("cfgSave").onclick = async () => {
   SB_URL = document.getElementById("cfgUrl").value.trim().replace(/\/+$/,"");
   SB_KEY = document.getElementById("cfgKey").value.trim();
+  const email = document.getElementById("cfgEmail").value.trim();
+  const pass = document.getElementById("cfgPass").value;
+  const msg = document.getElementById("cfgMsg");
   localStorage.setItem("sb_url", SB_URL);
   localStorage.setItem("sb_key", SB_KEY);
-  showConfig(false);
-  loadTrips().catch(e=>setStatus("Error: "+e.message));
+  msg.textContent = "Iniciando sesión...";
+  try {
+    const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=password`, {
+      method:"POST",
+      headers:{apikey:SB_KEY, "Content-Type":"application/json"},
+      body: JSON.stringify({email, password: pass})
+    });
+    const d = await r.json();
+    if(!d.access_token){ msg.textContent = "✗ " + (d.msg || d.error_description || "no se pudo iniciar sesión"); return; }
+    SB_TOKEN = d.access_token;
+    localStorage.setItem("sb_token", SB_TOKEN);
+    msg.textContent = "";
+    showConfig(false);
+    loadTrips().catch(e=>setStatus("Error: "+e.message));
+  } catch(e){ msg.textContent = "✗ " + e.message; }
 };
 
 async function sbGet(path){
-  const r = await fetch(`${SB_URL}/rest/v1/${path}`, {headers:{apikey:SB_KEY, Authorization:`Bearer ${SB_KEY}`}});
+  const auth = SB_TOKEN || SB_KEY;   // usa el token del usuario si hay sesión
+  const r = await fetch(`${SB_URL}/rest/v1/${path}`, {headers:{apikey:SB_KEY, Authorization:`Bearer ${auth}`}});
+  if(r.status===401){ localStorage.removeItem("sb_token"); SB_TOKEN=""; throw new Error("Sesión expirada — inicia sesión de nuevo (⚙ Configurar)"); }
   if(!r.ok) throw new Error(`Supabase ${r.status}`);
   return r.json();
 }
@@ -138,8 +160,8 @@ async function sbGet(path){
 let trips = [], currentTrip = null;
 
 async function loadTrips(){
-  if(!SB_URL || !SB_KEY){
-    setStatus("Configura tu proyecto de Supabase para empezar (botón ⚙ Configurar).");
+  if(!SB_URL || !SB_KEY || !SB_TOKEN){
+    setStatus("Inicia sesión con tu cuenta para ver tus viajes (botón ⚙ Configurar).");
     showConfig(true);
     return;
   }

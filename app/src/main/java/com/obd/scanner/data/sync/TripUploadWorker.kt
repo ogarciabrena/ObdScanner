@@ -33,13 +33,17 @@ class TripUploadWorker(
         val creds = app.syncSettings.current()
         if (!creds.isConfigured) return@withContext Result.success()
 
+        // Con Auth activado, se sube con el token del usuario (RLS ata cada
+        // viaje a su cuenta). Sin sesión, los viajes quedan en cola local.
+        val token = app.authManager.validAccessToken() ?: return@withContext Result.retry()
+
         val files = app.tripRecorder.listPendingTrips()
         if (files.isEmpty()) return@withContext Result.success()
 
         var anyFailure = false
         for (file in files) {
             try {
-                if (uploadTrip(file, creds)) {
+                if (uploadTrip(file, creds, token)) {
                     file.delete()
                 } else {
                     anyFailure = true
@@ -51,7 +55,7 @@ class TripUploadWorker(
         if (anyFailure) Result.retry() else Result.success()
     }
 
-    private fun uploadTrip(file: File, creds: SupabaseCredentials): Boolean {
+    private fun uploadTrip(file: File, creds: SupabaseCredentials, token: String): Boolean {
         val tripId = file.nameWithoutExtension
         var device = ""
         var startTs = 0L
@@ -100,20 +104,20 @@ class TripUploadWorker(
             .put("end_ts", endTs)
             .put("sample_count", sampleCount)
 
-        if (!post(creds, "trips?on_conflict=id", JSONArray().put(trip), "resolution=merge-duplicates")) {
+        if (!post(creds, token, "trips?on_conflict=id", JSONArray().put(trip), "resolution=merge-duplicates")) {
             return false
         }
 
         samples.chunked(500).forEach { chunk ->
             val body = JSONArray().apply { chunk.forEach { put(it) } }
-            if (!post(creds, "telemetry?on_conflict=trip_id,ts,pid", body, "resolution=ignore-duplicates")) {
+            if (!post(creds, token, "telemetry?on_conflict=trip_id,ts,pid", body, "resolution=ignore-duplicates")) {
                 return false
             }
         }
         return true
     }
 
-    private fun post(creds: SupabaseCredentials, path: String, body: JSONArray, prefer: String): Boolean {
+    private fun post(creds: SupabaseCredentials, token: String, path: String, body: JSONArray, prefer: String): Boolean {
         val conn = URL("${creds.url}/rest/v1/$path").openConnection() as HttpURLConnection
         return try {
             conn.requestMethod = "POST"
@@ -121,7 +125,7 @@ class TripUploadWorker(
             conn.readTimeout = 30000
             conn.doOutput = true
             conn.setRequestProperty("apikey", creds.key)
-            conn.setRequestProperty("Authorization", "Bearer ${creds.key}")
+            conn.setRequestProperty("Authorization", "Bearer $token")
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Prefer", prefer)
             conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }

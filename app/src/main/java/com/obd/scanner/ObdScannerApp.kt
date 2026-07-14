@@ -2,6 +2,7 @@ package com.obd.scanner
 
 import android.app.Application
 import com.obd.scanner.data.obd.BluetoothManager
+import com.obd.scanner.data.sync.AuthManager
 import com.obd.scanner.data.sync.SyncSettings
 import com.obd.scanner.data.sync.TripUploadWorker
 import com.obd.scanner.data.trip.TripRecorder
@@ -12,6 +13,7 @@ class ObdScannerApp : Application() {
     val obdUseCase: ObdUseCase by lazy { ObdUseCase(bluetoothManager) }
     val tripRecorder: TripRecorder by lazy { TripRecorder(this) }
     val syncSettings: SyncSettings by lazy { SyncSettings(this) }
+    val authManager: AuthManager by lazy { AuthManager(this, syncSettings) }
 
     override fun onCreate() {
         super.onCreate()

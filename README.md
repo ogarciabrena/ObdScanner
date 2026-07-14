@@ -40,17 +40,20 @@ Adaptador OBD ──Bluetooth──> App Android (tableta/celular)
 ### 1. Crea tu proyecto en Supabase (gratis)
 
 1. Regístrate en [supabase.com](https://supabase.com) y crea un proyecto nuevo.
-2. Ve a **SQL Editor** → **New query**, pega el contenido de [`supabase_schema.sql`](supabase_schema.sql) y presiona **Run**. Esto crea las tablas `trips` y `telemetry` con sus políticas de seguridad.
-3. Ve a **Settings → API Keys** y copia:
+2. Ve a **SQL Editor** → **New query**, pega el contenido de [`supabase_schema.sql`](supabase_schema.sql) y presiona **Run** (crea las tablas). Luego repite con [`supabase_auth_schema.sql`](supabase_auth_schema.sql) para activar la separación de datos por usuario.
+3. En **Authentication → Sign In / Providers → Email**, apaga **"Confirm email"** para que el registro entre al instante (o déjalo si prefieres confirmar por correo).
+4. Ve a **Settings → API Keys** y copia:
    - **Project URL** (ej. `https://abcdefgh.supabase.co`)
    - **Publishable key** (`sb_publishable_...`)
+
+> **Cuentas por vehículo:** con Auth activado, cada cuenta (email/contraseña) separa sus datos. Registra una cuenta por carro y sus viajes no se mezclan.
 
 ### 2. Instala y configura la app
 
 **Opción A — APK precompilado** (Releases de este repo):
 1. Instala el APK en tu Android (7.0+, con Bluetooth).
-2. Abre la app → pestaña **Settings** → sección *Sincronización en la nube*.
-3. Pega tu Project URL y tu publishable key → **Guardar**.
+2. Abre la app → pestaña **Settings** → sección *Sincronización en la nube*: pega tu Project URL y tu publishable key → **Verificar y guardar**.
+3. En la sección *Cuenta*: **Regístrate** con email y contraseña (o inicia sesión). Tus viajes se subirán a tu cuenta.
 
 **Opción B — compilar desde código**:
 ```bash
